@@ -71,7 +71,7 @@ static void BGA_Open() {
 	Raw_ReadFrameDescs();
 }
 
-static void BGA_DrawFrame(const int FrameIndex) {
+static void BGA_DrawFrame_C(const int FrameIndex) {
 	const u8* pDescs = &BGA_pFrameDescs[FrameIndex * 5];
 	const u32 SectorIndex = ((u32)pDescs[0] << 16) | ((u32)pDescs[1] << 8) | ((u32)pDescs[2] << 0);
 	const u8 SectorsCount = pDescs[3];
@@ -87,6 +87,7 @@ static void BGA_DrawFrame(const int FrameIndex) {
 	const u32 us = micros();
 
 	const u8* pSrcBuf = BGA_pBuf;
+
 	switch (bpp) {
 	case 1: {
 		for (int y = 0; y < 480; y++) {
@@ -157,10 +158,13 @@ static void BGA_DrawFrame(const int FrameIndex) {
 				} break;
 				case 0b10: {
 					*pVRAM++ = (Data >> 0) & 0b111;
+					*pVRAM++ = (Data >> 3) & 0b111;
 				} break;
 				case 0b11: {
-					*pVRAM++ = (Data >> 0) & 0b111;
-					*pVRAM++ = (Data >> 3) & 0b111;
+					int len = (Data & 0b00111000) >> 3;
+					len++;
+					byte v = Data & 0b00000111;
+					for (; 0 < len; len--) { *pVRAM++ = v; }
 				} break;
 				}
 			}
@@ -171,4 +175,108 @@ static void BGA_DrawFrame(const int FrameIndex) {
 
 	Serial.println(String(FrameIndex)); // この行を消すと極端に遅くなる。最適化を阻害している？
 }
+
+static void BGA_DrawFrame_Asm(const int FrameIndex) {
+	const u8* pDescs = &BGA_pFrameDescs[FrameIndex * 5];
+	const u32 SectorIndex = ((u32)pDescs[0] << 16) | ((u32)pDescs[1] << 8) | ((u32)pDescs[2] << 0);
+	const u8 SectorsCount = pDescs[3];
+	const u8 bpp = pDescs[4];
+
+	Raw_ReadFrameData(SectorIndex, SectorsCount);
+
+	if (vga.bits != 8) {
+		Serial.println(String(FrameIndex) + " Not support 16bits VGA mode. " + String(vga.bits));
+		while (true) { delay(1); }
+	}
+
+	const u32 us = micros();
+
+	const u8* pSrcBuf = BGA_pBuf;
+
+	switch (bpp) {
+	case 1: case 2: {
+		Serial.println("Asm not support " + String(bpp) + "bpp.");
+		while (true) { delay(1); }
+	} break;
+	case 3: {
+		for (int y = 0; y < 480; y++) {
+			u8* pVRAM = vga.dmaBuffer->getLineAddr8(y, vga.backBuffer);
+			u8* pVRAMTerm = &pVRAM[640];
+			u8 Data, len, Value;
+			u8 BitMask6 = 0b00111111;
+
+			asm volatile(
+				".Start: \n"
+				"l8ui %[Data], %[pSrcBuf], 0 \n"
+				"addi %[pSrcBuf], %[pSrcBuf], 1 \n"
+
+				"extui %[Value], %[Data], 6, 2 \n"
+				//"beqi %[Value], 0, .Start_0b00 \n"
+				"beqi %[Value], 1, .Start_0b01 \n"
+				"beqi %[Value], 2, .Start_0b10 \n"
+				"beqi %[Value], 3, .Start_0b11 \n"
+
+				".Start_0b00: \n"
+				"extui %[len], %[Data], 0, 6 \n"
+				"bne %[len], %[BitMask6], .Skip_0b00 \n"
+				"l8ui %[len], %[pSrcBuf], 0 \n"
+				"addi %[pSrcBuf], %[pSrcBuf], 1 \n"
+				"add %[len], %[len], %[BitMask6] \n"
+				".Skip_0b00: \n"
+				"addi %[len], %[len], 1 \n"
+				"movi %[Value], 0x00 \n"
+				"loop %[len],.LoopEnd_0b00 \n"
+				"  s8i %[Value], %[pVRAM], 0 \n"
+				"  addi %[pVRAM], %[pVRAM], 1 \n"
+				".LoopEnd_0b00: \n"
+				"bne %[pVRAM], %[pVRAMTerm], .Start \n"
+				"j .End \n"
+
+				".Start_0b01: \n"
+				"extui %[len], %[Data], 0, 6 \n"
+				"bne %[len], %[BitMask6], .Skip_0b01 \n"
+				"l8ui %[len], %[pSrcBuf], 0 \n"
+				"addi %[pSrcBuf], %[pSrcBuf], 1 \n"
+				"add %[len], %[len], %[BitMask6] \n"
+				".Skip_0b01: \n"
+				"addi %[len], %[len], 1 \n"
+				"movi %[Value], 0x07 \n"
+				"loop %[len],.LoopEnd_0b01 \n"
+				"  s8i %[Value], %[pVRAM], 0 \n"
+				"  addi %[pVRAM], %[pVRAM], 1 \n"
+				".LoopEnd_0b01: \n"
+				"bne %[pVRAM], %[pVRAMTerm], .Start \n"
+				"j .End \n"
+
+				".Start_0b10: \n"
+				"extui %[Value], %[Data], 0, 3 \n"
+				"s8i %[Value], %[pVRAM], 0 \n"
+				"extui %[Value], %[Data], 3, 3 \n"
+				"s8i %[Value], %[pVRAM], 1 \n"
+				"addi %[pVRAM], %[pVRAM], 2 \n"
+				"bne %[pVRAM], %[pVRAMTerm], .Start \n"
+				"j .End \n"
+
+				".Start_0b11: \n"
+				"extui %[len], %[Data], 3, 3 \n"
+				"addi %[len], %[len], 1 \n"
+				"extui %[Value], %[Data], 0, 3 \n"
+				"loop %[len],.LoopEnd_0b11 \n"
+				"  s8i %[Value], %[pVRAM], 0 \n"
+				"  addi %[pVRAM], %[pVRAM], 1 \n"
+				".LoopEnd_0b11: \n"
+				"bne %[pVRAM], %[pVRAMTerm], .Start \n"
+
+				".End: \n"
+
+				: [pVRAM] "m+r" (pVRAM), [pVRAMTerm] "m+r" (pVRAMTerm), [pSrcBuf] "m+r" (pSrcBuf), [Data] "l=r" (Data), [len] "l=r" (len), [Value] "l=r" (Value), [BitMask6] "l+r" (BitMask6) // output_list
+				: // input_list
+				: // clobber-list
+				);
+			VRAMFlush(y);
+		}
+	} break;
+	}
+}
+
 

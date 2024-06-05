@@ -151,9 +151,8 @@ void setup() {
 	ConsoleWriteLine("-----------------------------------------------");
 
 	ShowChipInfos();
-	ConsoleSetFontHeight(16);
-	ConsoleWriteLine("Wait 3secs.");
-	delay(3000);
+
+	//ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
 
 	ConsoleSetFontHeight(24);
 	ConsoleWriteLine("-----------------------------------------------");
@@ -190,18 +189,14 @@ void setup() {
 	}
 	ConsoleSetFontHeight(24);
 
-	ConsoleSetFontHeight(16);
-	ConsoleWriteLine("Wait 3secs.");
-	delay(3000);
+	//ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
 
 	ConsoleSetFontHeight(24);
 	ConsoleWriteLine("-----------------------------------------------");
 
 	BGA_Open();
 
-	ConsoleSetFontHeight(16);
-	ConsoleWriteLine("Wait 3secs.");
-	delay(3000);
+	//ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
 }
 
 void loop() {
@@ -225,8 +220,9 @@ void loop() {
 				Serial.println("Delay: " + String(DelayMillis) + "ms.");
 			}
 
-			BGA_DrawFrame(BGA_FrameIndex);
+			BGA_DrawFrame_Asm(BGA_FrameIndex);
 			BGA_FrameIndex++;
+
 			if (BGA_FrameIndex == BGA_FramesCount) {
 				BGA_Close();
 
