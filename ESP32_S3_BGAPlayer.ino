@@ -52,6 +52,7 @@ static void DrawColorBar() {
 			vga.dotdit(x, y, x, y, 255 - x);
 		}
 	}
+
 	for (int y = 0; y < 30; y++) {
 		for (int x = 0; x < 256; x++) {
 			vga.dotdit(x, y, x, 0, 0);
@@ -59,6 +60,18 @@ static void DrawColorBar() {
 			vga.dotdit(x, y + 60, 0, 0, x);
 		}
 	}
+
+	vga.show();
+}
+
+static void ClearVRAM() {
+	for (int y = 0; y < VGAMode.vRes; y++) {
+		for (int x = 0; x < VGAMode.hRes; x++) {
+			vga.dot(x, y, 0, 0, 0);
+		}
+	}
+
+	vga.show();
 }
 
 static void ShowChipInfos() {
@@ -122,25 +135,19 @@ static void ShowChipInfos() {
 }
 
 void setup() {
-	//elay(3000);
+	//delay(3000);
 
 	SerialPortInit();
 
 	ESP32_S3_LED_Init();
 
-	ESP32_S3_LED_SetRed(); delay(100);
-	ESP32_S3_LED_SetGreen(); delay(100);
-	ESP32_S3_LED_SetBlue(); delay(100);
-	ESP32_S3_LED_SetBlack();
-
 	if (!vga.init(pins, VGAMode, VGABits)) {
 		Serial.println("VGA init error.");
 		while (1) { delay(1); }
 	}
+	vga.start();
 
 	DrawColorBar();
-	vga.show();
-	vga.start();
 	delay(3000);
 
 	ConsoleSetFontHeight(32);
@@ -152,7 +159,8 @@ void setup() {
 
 	ShowChipInfos();
 
-	//ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
+	ESP32_S3_LED_SetRGB(0, 0x40, 0);
+	ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
 
 	ConsoleSetFontHeight(24);
 	ConsoleWriteLine("-----------------------------------------------");
@@ -189,14 +197,19 @@ void setup() {
 	}
 	ConsoleSetFontHeight(24);
 
-	//ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
+	ESP32_S3_LED_SetRGB(0x40, 0, 0);
+	ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
 
 	ConsoleSetFontHeight(24);
 	ConsoleWriteLine("-----------------------------------------------");
 
 	BGA_Open();
 
-	//ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
+	ESP32_S3_LED_SetRGB(0, 0, 0x40);
+	ConsoleSetFontHeight(16); ConsoleWriteLine("Wait 3secs."); delay(3000);
+
+	ESP32_S3_LED_SetBlack();
+	ClearVRAM();
 }
 
 void loop() {
@@ -207,19 +220,17 @@ void loop() {
 		const int NextMillis = BGA_FrameIndex * 1000 / 60;
 		const int DelayMillis = (millis() - StartMillis) - NextMillis;
 
+		if (false) {
+			int LED = DelayMillis * 0x100 / 1000; // 1秒遅れると最大輝度
+			if (0xff < LED) { LED = 0xff; }
+			ESP32_S3_LED_SetRGB(LED, LED, LED);
+		}
+
+		if (16 <= DelayMillis) {
+			Serial.println(String(BGA_FrameIndex) + " Delay: " + String(DelayMillis) + "ms.");
+		}
+
 		if (0 <= DelayMillis) {
-			static int LastRed = 1;
-			int CurRed = DelayMillis * 0x10 / 1000; // 1秒遅れると最大輝度
-			if (0x10 < CurRed) { CurRed = 0x10; }
-			if (LastRed != CurRed) {
-				LastRed = CurRed;
-				ESP32_S3_LED_SetRGB(CurRed, 0, 0);
-			}
-
-			if (100 <= DelayMillis) {
-				Serial.println("Delay: " + String(DelayMillis) + "ms.");
-			}
-
 			BGA_DrawFrame_Asm(BGA_FrameIndex);
 			BGA_FrameIndex++;
 

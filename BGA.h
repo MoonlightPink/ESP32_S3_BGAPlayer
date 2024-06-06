@@ -34,7 +34,7 @@ static void Raw_ReadHeader() {
 static void Raw_ReadFrameDescs() {
 	ConsoleWriteLine("Raw: Read frame descs.");
 
-	const int FrameDescsSectors = ((BGA_FramesCount * 5) + 511) / 512;
+	const int FrameDescsSectors = ((BGA_FramesCount * 4) + 511) / 512;
 	BGA_pFrameDescs = (u8*)malloc(FrameDescsSectors * 512);
 
 	const u32 us = micros();
@@ -72,10 +72,9 @@ static void BGA_Open() {
 }
 
 static void BGA_DrawFrame_C(const int FrameIndex) {
-	const u8* pDescs = &BGA_pFrameDescs[FrameIndex * 5];
-	const u32 SectorIndex = ((u32)pDescs[0] << 16) | ((u32)pDescs[1] << 8) | ((u32)pDescs[2] << 0);
+	const u8* pDescs = &BGA_pFrameDescs[FrameIndex * 4];
+	const u32 SectorIndex = ((u32)pDescs[0] << 0) | ((u32)pDescs[1] << 8) | ((u32)pDescs[2] << 16);
 	const u8 SectorsCount = pDescs[3];
-	const u8 bpp = pDescs[4];
 
 	Raw_ReadFrameData(SectorIndex, SectorsCount);
 
@@ -88,99 +87,47 @@ static void BGA_DrawFrame_C(const int FrameIndex) {
 
 	const u8* pSrcBuf = BGA_pBuf;
 
-	switch (bpp) {
-	case 1: {
-		for (int y = 0; y < 480; y++) {
-			u8* pVRAM = vga.dmaBuffer->getLineAddr8(y, vga.backBuffer);
-			const u8* pVRAMTerm = &pVRAM[640];
-			while (pVRAM < pVRAMTerm) {
-				const u8 Data = *pSrcBuf++;
+	for (int y = 0; y < 480; y++) {
+		u8* pVRAM = vga.dmaBuffer->getLineAddr8(y, vga.backBuffer);
+		pVRAM += (*pSrcBuf++) * 4;
+		const u8* pVRAMTerm = &pVRAM[(*pSrcBuf++) * 4];
+		while (pVRAM < pVRAMTerm) {
+			const u8 Data = *pSrcBuf++;
+			switch (Data >> 6) {
+			case 0b00: {
 				int len = Data & 0b00111111;
 				if (len == 0b00111111) { len += *pSrcBuf++; }
 				len++;
-				switch (Data >> 6) {
-				case 0b00: {
-					for (; 0 < len; len--) { *pVRAM++ = 0b000; }
-				} break;
-				case 0b01: {
-					for (; 0 < len; len--) { *pVRAM++ = 0b111; }
-				} break;
-				}
-			}
-			VRAMFlush(y);
-		}
-	} break;
-	case 2: {
-		for (int y = 0; y < 480; y++) {
-			u8* pVRAM = vga.dmaBuffer->getLineAddr8(y, vga.backBuffer);
-			const u8* pVRAMTerm = &pVRAM[640];
-			while (pVRAM < pVRAMTerm) {
-				const u8 Data = *pSrcBuf++;
+				for (; 0 < len; len--) { *pVRAM++ = 0b000; }
+			} break;
+			case 0b01: {
 				int len = Data & 0b00111111;
 				if (len == 0b00111111) { len += *pSrcBuf++; }
 				len++;
-				switch (Data >> 6) {
-				case 0b00: {
-					for (; 0 < len; len--) { *pVRAM++ = 0b000; }
-				} break;
-				case 0b01: {
-					for (; 0 < len; len--) { *pVRAM++ = 0b111; }
-				} break;
-				case 0b10: {
-					for (; 0 < len; len--) { *pVRAM++ = 0b010; }
-				} break;
-				case 0b11: {
-					for (; 0 < len; len--) { *pVRAM++ = 0b100; }
-				} break;
-				}
+				for (; 0 < len; len--) { *pVRAM++ = 0b111; }
+			} break;
+			case 0b10: {
+				*pVRAM++ = (Data >> 0) & 0b111;
+				*pVRAM++ = (Data >> 3) & 0b111;
+			} break;
+			case 0b11: {
+				int len = (Data & 0b00111000) >> 3;
+				len++;
+				byte v = Data & 0b00000111;
+				for (; 0 < len; len--) { *pVRAM++ = v; }
+			} break;
 			}
-			VRAMFlush(y);
 		}
-	} break;
-	case 3: {
-		for (int y = 0; y < 480; y++) {
-			u8* pVRAM = vga.dmaBuffer->getLineAddr8(y, vga.backBuffer);
-			const u8* pVRAMTerm = &pVRAM[640];
-			while (pVRAM < pVRAMTerm) {
-				const u8 Data = *pSrcBuf++;
-				switch (Data >> 6) {
-				case 0b00: {
-					int len = Data & 0b00111111;
-					if (len == 0b00111111) { len += *pSrcBuf++; }
-					len++;
-					for (; 0 < len; len--) { *pVRAM++ = 0b000; }
-				} break;
-				case 0b01: {
-					int len = Data & 0b00111111;
-					if (len == 0b00111111) { len += *pSrcBuf++; }
-					len++;
-					for (; 0 < len; len--) { *pVRAM++ = 0b111; }
-				} break;
-				case 0b10: {
-					*pVRAM++ = (Data >> 0) & 0b111;
-					*pVRAM++ = (Data >> 3) & 0b111;
-				} break;
-				case 0b11: {
-					int len = (Data & 0b00111000) >> 3;
-					len++;
-					byte v = Data & 0b00000111;
-					for (; 0 < len; len--) { *pVRAM++ = v; }
-				} break;
-				}
-			}
-			VRAMFlush(y);
-		}
-	} break;
+		VRAMFlush(y);
 	}
 
 	Serial.println(String(FrameIndex)); // この行を消すと極端に遅くなる。最適化を阻害している？
 }
 
 static void BGA_DrawFrame_Asm(const int FrameIndex) {
-	const u8* pDescs = &BGA_pFrameDescs[FrameIndex * 5];
-	const u32 SectorIndex = ((u32)pDescs[0] << 16) | ((u32)pDescs[1] << 8) | ((u32)pDescs[2] << 0);
+	const u8* pDescs = &BGA_pFrameDescs[FrameIndex * 4];
+	const u32 SectorIndex = ((u32)pDescs[0] << 0) | ((u32)pDescs[1] << 8) | ((u32)pDescs[2] << 16);
 	const u8 SectorsCount = pDescs[3];
-	const u8 bpp = pDescs[4];
 
 	Raw_ReadFrameData(SectorIndex, SectorsCount);
 
@@ -189,22 +136,36 @@ static void BGA_DrawFrame_Asm(const int FrameIndex) {
 		while (true) { delay(1); }
 	}
 
-	const u32 us = micros();
-
 	const u8* pSrcBuf = BGA_pBuf;
 
-	switch (bpp) {
-	case 1: case 2: {
-		Serial.println("Asm not support " + String(bpp) + "bpp.");
-		while (true) { delay(1); }
-	} break;
-	case 3: {
-		for (int y = 0; y < 480; y++) {
-			u8* pVRAM = vga.dmaBuffer->getLineAddr8(y, vga.backBuffer);
-			u8* pVRAMTerm = &pVRAM[640];
+	{
+		static bool f = false;
+		static u8 rtbl[0x100], gtbl[0x100], btbl[0x100];
+		if (!f) {
+			f = true;
+			for (u32 a = 0; a < 0x100; a++) {
+				const u32 v = (a * a * a * a) / (0xff * 0xff * 0xff);
+				rtbl[a] = v * (1 - 0.299) * 0.25;
+				gtbl[a] = v * (1 - 0.587) * 0.25;
+				btbl[a] = v * (1 - 0.114) * 0.25;
+			}
+		}
+		const u8 R = *pSrcBuf++;
+		const u8 G = *pSrcBuf++;
+		const u8 B = *pSrcBuf++;
+		ESP32_S3_LED_SetRGBDirect(rtbl[R], gtbl[G], btbl[B]);
+	}
+
+	const u32 us = micros();
+
+	for (int y = 0; y < 480; y++) {
+		u8* pVRAM = vga.dmaBuffer->getLineAddr8(y, vga.backBuffer);
+		pVRAM += (*pSrcBuf++) * 4;
+		const u8* pVRAMTerm = &pVRAM[(*pSrcBuf++) * 4];
+
+		if (pVRAM != pVRAMTerm) {
 			u8 Data, len, Value;
 			u8 BitMask6 = 0b00111111;
-
 			asm volatile(
 				".Start: \n"
 				"l8ui %[Data], %[pSrcBuf], 0 \n"
@@ -275,7 +236,6 @@ static void BGA_DrawFrame_Asm(const int FrameIndex) {
 				);
 			VRAMFlush(y);
 		}
-	} break;
 	}
 }
 
